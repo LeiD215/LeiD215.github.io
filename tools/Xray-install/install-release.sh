@@ -18,10 +18,11 @@ DAT_PATH=${DAT_PATH:-/usr/local/share/xray}
 
 # You can set this variable whatever you want in shell session right before running this script by issuing:
 # export JSON_PATH='/usr/local/etc/xray'
-JSON_PATH=${JSON_PATH:-/usr/local/etc/xray}
+#JSON_PATH=${JSON_PATH:-/usr/local/etc/xray}
 
 # Set this variable only if you are starting xray with multiple configuration files:
 # export JSONS_PATH='/usr/local/etc/xray'
+JSONS_PATH=${JSONS_PATH:-/usr/local/etc/xray}
 
 # Set this variable only if you want this script to check all the systemd unit file:
 # export check_all_service_files='yes'
