@@ -34,6 +34,8 @@ sudo chmod 600 $SWAP_PATH                # Set proper permission
 sudo mkswap $SWAP_PATH                   # Setup swap         
 sudo swapon $SWAP_PATH                   # Enable swap
 echo "$SWAP_PATH   none    swap    sw    0   0" | sudo tee /etc/fstab -a # Add to fstab
+echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
+echo 'vm.vfs_cache_pressure=50' | sudo tee -a /etc/sysctl.conf
 
 ## Outro
 
