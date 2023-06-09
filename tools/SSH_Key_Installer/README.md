@@ -13,6 +13,9 @@ Install SSH keys via GitHub, URL or local files
 ```
 bash <(curl -fsSL git.io/key.sh) [options...] <arg>
 ```
+```
+bash <(curl -fsSL git.io/key.sh) [选项...] <参数>
+```
 
 ## Options
 
@@ -23,6 +26,23 @@ bash <(curl -fsSL git.io/key.sh) [options...] <arg>
 * `-p` - Change SSH port, the arguments is port number
 * `-d` - Disable password login
 
+* `-o` - 覆盖模式，必须写在最前面才会生效
+* `-g` - 从 GitHub 获取公钥，参数为 GitHub 用户名
+* `-u` - 从 URL 获取公钥，参数为 URL
+* `-f` - 从本地文件获取公钥，参数为本地文件路径
+* `-p` - 修改 SSH 端口，参数为端口号
+* `-d` - 禁用密码登录
+
 ## Lisence
 
 [MIT](https://github.com/P3TERX/SSH_Key_Installer/blob/master/LICENSE) © P3TERX
+
+## Other
+```
+mkdir -p ~/.ssh
+curl -fsSL https://github.com/LeiD215/LeiD215.github.io/raw/master/tools/temp/gmail.key >> ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+sudo sed -i "s@.*\(PasswordAuthentication \).*@\1no@" /etc/ssh/sshd_config
+sudo service sshd restart
+```
