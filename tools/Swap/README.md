@@ -20,6 +20,7 @@ sh swap <size> -y
 ```
 
 Example (with 4G):
+
 交互模式：
 ```
 sh swap 4G
