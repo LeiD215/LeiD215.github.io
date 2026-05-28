@@ -55,7 +55,7 @@ check_installed_firewalls() {
 }
 
 # ==========================================
-# 2. 交互式卸载与全新安装（已升级智能跳过逻辑）
+# 2. 交互式卸载与全新安装
 # ==========================================
 manage_installation() {
     local skipped_install=false
@@ -92,7 +92,7 @@ manage_installation() {
             HAS_UFW=false
             HAS_FIREWALLD=false
         else
-            # 【智能识别点】：如果用户选择不卸载，且系统里恰好只有一个防火墙在运行，直接接管并跳过后续菜单
+            # 如果用户选择不卸载，直接锁定管理目标并跳过安装菜单
             if [ "$HAS_UFW" = true ] && [ "$HAS_FIREWALLD" = false ]; then
                 CURRENT_FW="ufw"
                 skipped_install=true
@@ -105,7 +105,7 @@ manage_installation() {
         fi
     fi
 
-    # 如果满足跳过条件，直接退出本函数，不再弹出无意义的安装菜单
+    # 如果满足跳过条件，直接退出本函数
     if [ "$skipped_install" = true ]; then
         return
     fi
@@ -155,12 +155,11 @@ init_ssh_security() {
     echo "------------------------------------------"
     echo "🛡️ 正在启动 [SSH 安全初始化防御拦截] 机制..."
     
-    # 精准读取系统当前真实监听的 SSH 端口 (排除注释行，提取Port字段或监听状态)
+    # 精准读取系统当前真实监听的 SSH 端口
     SSH_PORT=$(ss -tlnp | grep -E 'sshd|"sshd"' | awk '{print $4}' | awk -F':' '{print $nf}' | sort -nu | head -n1)
     if [ -z "$SSH_PORT" ]; then
-        # 备用方案：通过 sshd_config 配置文件解析
         SSH_PORT=$(grep -E -i "^\s*Port\s+" /etc/ssh/sshd_config | awk '{print $2}' | head -n1)
-        [ -z "$SSH_PORT" ] && SSH_PORT=22 # 最终兜底默认22
+        [ -z "$SSH_PORT" ] && SSH_PORT=22
     fi
 
     read -p "🤖 智能检测到当前 SSH 端口可能是 [ $SSH_PORT ]。请按回车确认，或直接输入您的实际 SSH 端口: " user_port
@@ -168,5 +167,296 @@ init_ssh_security() {
         SSH_PORT=$user_port
     fi
 
-    echo "🔒 安全策略执行中：默认拒绝所有外部入站流量，
+    echo "🔒 安全策略执行中：默认拒绝所有外部入站流量，仅放行确认的 SSH 端口 ($SSH_PORT)..."
     
+    if [ "$CURRENT_FW" = "ufw" ]; then
+        ufw disable >/dev/null 2>&1
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow "$SSH_PORT"/tcp comment 'SSH Port Auto Allowed'
+        echo "y" | ufw enable >/dev/null
+    elif [ "$CURRENT_FW" = "firewalld" ]; then
+        local zone=$(firewall-cmd --get-default-zone)
+        firewall-cmd --permanent --zone="$zone" --remove-service=ssh >/dev/null 2>&1
+        firewall-cmd --permanent --zone="$zone" --add-port="$SSH_PORT"/tcp
+        firewall-cmd --reload >/dev/null
+    fi
+    
+    echo "=================================================================="
+    echo "✅ 防火墙安全初始化成功！当前规则：【默认阻断所有，仅开放 SSH 端口: $SSH_PORT】"
+    echo "⚠️  【紧急安全提醒】: 请切勿关闭当前的 SSH 终端窗口！"
+    echo "    请立即新建一个独立的终端窗口尝试重新连接本服务器，确保 SSH 未被锁死！"
+    echo "=================================================================="
+}
+
+# ==========================================
+# 4. 双栈内核转发智能使能
+# ==========================================
+enable_ip_forwarding() {
+    if [ "$IP_VER" = "4" ] || [ "$IP_VER" = "both" ]; then
+        if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" -ne 1 ]; then
+            echo "🌐 检测到系统内核未开启 IPv4 数据包转发，正在为您使能..."
+            sysctl -w net.ipv4.ip_forward=1 >/dev/null
+            grep -q "net.ipv4.ip_forward" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+        fi
+    fi
+
+    if [ "$IP_VER" = "6" ] || [ "$IP_VER" = "both" ]; then
+        if [ "$(sysctl -n net.ipv6.conf.all.forwarding 2>/dev/null)" -ne 1 ]; then
+            echo "🌐 检测到系统内核未开启 IPv6 数据包转发，正在为您使能..."
+            sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
+            grep -q "net.ipv6.conf.all.forwarding" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+            
+            # 健壮性加固
+            sysctl -w net.ipv6.conf.all.accept_ra=2 >/dev/null 2>&1
+            grep -q "net.ipv6.conf.all.accept_ra" /etc/sysctl.conf || echo "net.ipv6.conf.all.accept_ra=2" >> /etc/sysctl.conf
+        fi
+    fi
+    sysctl -p >/dev/null 2>&1
+}
+
+# ==========================================
+# 5. 模块化通用多选交互函数
+# ==========================================
+choose_proto() {
+    echo "----------------------------------"
+    echo "👉 请选择要绑定的网络协议："
+    echo "1) TCP"
+    echo "2) UDP"
+    echo "3) TCP + UDP (两者都要)"
+    read -p "选择 (默认 1): " p_choice
+    case $p_choice in
+        2) PROTO="udp" ;;
+        3) PROTO="both" ;;
+        *) PROTO="tcp" ;;
+    esac
+    echo "Selected: ${PROTO^^}"
+}
+
+choose_ip_version() {
+    echo "----------------------------------"
+    echo "👉 请选择要适用的 IP 栈版本："
+    echo "1) IPv4"
+    echo "2) IPv6"
+    echo "3) IPv4 + IPv6 (两者都要)"
+    read -p "选择 (默认 1): " ip_choice
+    case $ip_choice in
+        2) IP_VER="6" ;;
+        3) IP_VER="both" ;;
+        *) IP_VER="4" ;;
+    esac
+    echo "Selected: IP v${IP_VER}"
+}
+
+# ==========================================
+# 6. 核心业务功能：基础端口开放与关闭
+# ==========================================
+manage_ports() {
+    echo "------------------------------------------"
+    echo "▶️  [功能：端口开放与关闭管理]"
+    echo "1) 开放特定端口"
+    echo "2) 阻止/关闭特定端口"
+    read -p "请选择操作 (1-2): " op_choice
+    read -p "请输入要操作的端口号 (单个如 80，连续范围如 8000:8010): " port
+    
+    if [ -z "$port" ]; then
+        echo "❌ 错误: 端口号不能为空！"
+        return
+    fi
+    
+    choose_proto
+    choose_ip_version
+
+    local action="allow"
+    [ "$op_choice" = "2" ] && action="deny"
+
+    local protos=("$PROTO")
+    [ "$PROTO" = "both" ] && protos=("tcp" "udp")
+
+    if [ "$CURRENT_FW" = "ufw" ]; then
+        for p in "${protos[@]}"; do
+            if [ "$IP_VER" = "4" ]; then
+                ufw $action proto $p from any to any port $port
+            elif [ "$IP_VER" = "6" ]; then
+                ufw $action proto $p from v6 any to any port $port
+            else
+                ufw $action proto $p port $port
+            fi
+        done
+        ufw reload >/dev/null
+    elif [ "$CURRENT_FW" = "firewalld" ]; then
+        local zone=$(firewall-cmd --get-default-zone)
+        local fw_action="--add-port"
+        [ "$op_choice" = "2" ] && fw_action="--remove-port"
+        
+        for p in "${protos[@]}"; do
+            if [ "$IP_VER" = "4" ]; then
+                firewall-cmd --permanent --zone="$zone" --add-rich-rule="rule family='ipv4' port port='$port' protocol='$p' accept" 2>/dev/null || firewall-cmd --permanent --zone="$zone" $fw_action="$port"/$p
+            elif [ "$IP_VER" = "6" ]; then
+                firewall-cmd --permanent --zone="$zone" --add-rich-rule="rule family='ipv6' port port='$port' protocol='$p' accept"
+            else
+                firewall-cmd --permanent --zone="$zone" $fw_action="$port"/$p
+            fi
+        done
+        firewall-cmd --reload >/dev/null
+    fi
+    echo "✅ 端口操作执行成功！操作: [${action^^}], 端口: [$port], 协议: [${PROTO^^}]"
+}
+
+# ==========================================
+# 7. 核心业务功能：端口转发 (支持双栈与多场景)
+# ==========================================
+manage_forwarding() {
+    echo "------------------------------------------"
+    echo "▶️  [功能：高级端口转发配置]"
+    
+    read -p "请输入本台服务器要【监听并暴露】的本地端口: " local_port
+    if [ -z "$local_port" ]; then echo "❌ 错误: 本地端口不能为空"; return; fi
+
+    choose_proto
+    choose_ip_version
+    enable_ip_forwarding  
+
+    echo "----------------------------------"
+    echo "👉 请选择转发的目的地类型："
+    echo "1) 本机内部转发 (将流量转到本机的另一个端口，如 80 -> 8080)"
+    echo "2) 外部服务器转发 (将流量跨网络转到另一台机器的特定 IP 和端口)"
+    read -p "请选择 (1-2): " fwd_type
+
+    if [ "$fwd_type" = "1" ]; then
+        read -p "请输入本机的目标端口: " target_port
+        target_ip="127.0.0.1"
+        target_ip_v6="::1"
+    else
+        read -p "请输入远端目标服务器的 IP 地址 (IPv4 或 IPv6): " target_ip
+        read -p "请输入远端目标服务器的端口号: " target_port
+        if [ -z "$target_ip" ] || [ -z "$target_port" ]; then
+            echo "❌ 错误: 目标 IP 或端口不能为空！"
+            return
+        fi
+    fi
+
+    local protos=("$PROTO")
+    [ "$PROTO" = "both" ] && protos=("tcp" "udp")
+
+    if [ "$CURRENT_FW" = "ufw" ]; then
+        echo "💡 正在通过内置高可靠性 iptables/ip6tables 引擎构建 UFW 环境下的转发链..."
+        for p in "${protos[@]}"; do
+            if [ "$IP_VER" = "4" ] || [ "$IP_VER" = "both" ]; then
+                iptables -t nat -A PREROUTING -p $p --dport $local_port -j DNAT --to-destination ${target_ip}:${target_port}
+                iptables -t nat -A POSTROUTING -p $p -d $target_ip --dport $target_port -j MASQUERADE
+                iptables -A FORWARD -p $p -d $target_ip --dport $target_port -j ACCEPT
+            fi
+            if [ "$IP_VER" = "6" ] || [ "$IP_VER" = "both" ]; then
+                local t_ip6=$target_ip
+                [ "$fwd_type" = "1" ] && t_ip6=$target_ip_v6
+                
+                ip6tables -t nat -A PREROUTING -p $p --dport $local_port -j DNAT --to-destination [${t_ip6}]:${target_port} >/dev/null 2>&1
+                ip6tables -t nat -A POSTROUTING -p $p -d ${t_ip6} --dport $target_port -j MASQUERADE >/dev/null 2>&1
+                ip6tables -A FORWARD -p $p -d ${t_ip6} --dport $target_port -j ACCEPT >/dev/null 2>&1
+            fi
+        done
+        
+        if command -v iptables-save >/dev/null 2>&1; then
+            mkdir -p /etc/iptables/
+            iptables-save > /etc/iptables/rules.v4
+            ip6tables-save > /etc/iptables/rules.v6 2>/dev/null
+        fi
+
+    elif [ "$CURRENT_FW" = "firewalld" ]; then
+        local zone=$(firewall-cmd --get-default-zone)
+        firewall-cmd --permanent --zone="$zone" --add-masquerade
+        
+        for p in "${protos[@]}"; do
+            if [ "$fwd_type" = "1" ]; then
+                if [ "$IP_VER" = "4" ] || [ "$IP_VER" = "both" ]; then
+                    firewall-cmd --permanent --zone="$zone" --add-forward-port=port=$local_port:proto=$p:toport=$target_port
+                fi
+                if [ "$IP_VER" = "6" ] || [ "$IP_VER" = "both" ]; then
+                    firewall-cmd --permanent --zone="$zone" --add-rich-rule="rule family='ipv6' forward-port port='$local_port' protocol='$p' to-port='$target_port'" 2>/dev/null
+                fi
+            else
+                if [ "$IP_VER" = "4" ] || [ "$IP_VER" = "both" ]; then
+                    firewall-cmd --permanent --zone="$zone" --add-forward-port=port=$local_port:proto=$p:toport=$target_port:toaddr=$target_ip
+                fi
+                if [ "$IP_VER" = "6" ] || [ "$IP_VER" = "both" ]; then
+                    firewall-cmd --permanent --zone="$zone" --add-rich-rule="rule family='ipv6' forward-port port='$local_port' protocol='$p' to-port='$target_port' to-addr='$target_ip'" 2>/dev/null
+                fi
+            fi
+        done
+        firewall-cmd --reload >/dev/null
+    fi
+    echo "✅ 端口转发策略部署成功！监听本地端口: [$local_port] -> 转发至: [${target_ip}:${target_port}]"
+}
+
+# ==========================================
+# 8. 全景状态查看
+# ==========================================
+show_status() {
+    echo "------------------------------------------------------------------"
+    echo "📊 [当前系统核心防火墙规则及转发全景一览]"
+    echo "------------------------------------------------------------------"
+    if [ "$CURRENT_FW" = "ufw" ]; then
+        ufw status verbose
+        echo "🔗 --- 额外附加的内核 NAT 转发链表 (IPv4) ---"
+        iptables -t nat -L PREROUTING -n --line-numbers 2>/dev/null
+        echo "🔗 --- 额外附加的内核 NAT 转发链表 (IPv6) ---"
+        ip6tables -t nat -L PREROUTING -n --line-numbers 2>/dev/null
+    elif [ "$CURRENT_FW" = "firewalld" ]; then
+        firewall-cmd --list-all
+    fi
+}
+
+# ==========================================
+# 9. 脚本主控制循环菜单
+# ==========================================
+main_menu() {
+    while true; do
+        echo ""
+        echo "=================================================================="
+        echo "   🛡️  Linux 智能多发行版自动化防火墙管理系统"
+        echo "   当前环境发行版: ${OS_NAME^^} | 正在纳管的防火墙后端: ${CURRENT_FW^^}"
+        echo "=================================================================="
+        echo " 1) ⚡ 开启 / 关闭指定网络端口"
+        echo " 2) 🔄 配置 内部 / 外部 端口转发 (支持 IPv4/IPv6 双栈)"
+        echo " 3) 📊 实时查看当前全量防火墙规则和转发链"
+        echo " 4) 🚨 重新执行 SSH 安全初始化 (如变更了端口或防锁死救援)"
+        echo " 5) ❌ 安全退出脚本"
+        echo "=================================================================="
+        read -p "请选择您要执行的高级运维操作 (1-5): " menu_choice
+        
+        case $menu_choice in
+            1) manage_ports ;;
+            2) manage_forwarding ;;
+            3) show_status ;;
+            4) init_ssh_security ;;
+            5) echo "👋 感谢使用！防火墙已安全托管运行，再见！"; exit 0 ;;
+            *) echo "❌ 输入错误: 未知指令，请重新在 1 到 5 之间进行选择。" ;;
+        esac
+    done
+}
+
+# ==========================================
+# 🚀 脚本执行总入口
+# ==========================================
+clear
+detect_os
+check_installed_firewalls
+manage_installation
+
+# 智能兜底
+if [ -z "$CURRENT_FW" ]; then
+    command -v ufw >/dev/null 2>&1 && CURRENT_FW="ufw"
+    command -v firewall-cmd >/dev/null 2>&1 && CURRENT_FW="firewalld"
+fi
+
+if [ -z "$CURRENT_FW" ]; then
+    echo "❌ 错误: 未检测到任何可用的防火墙后端（UFW 或 Firewalld），请重新运行脚本并选择进行安装！"
+    exit 1
+fi
+
+# 强力触发 SSH 保护策略初始化
+init_ssh_security
+
+# 激活主操作循环
+main_menu
