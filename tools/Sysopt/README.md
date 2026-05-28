@@ -17,6 +17,7 @@ Debian 9 / 10 / 11 / 12 / 13 (最新版)
 Ubuntu 18.04 / 20.04 / 22.04 / 24.04
 
 CentOS / Rocky Linux / AlmaLinux 7 / 8 / 9
+
 ---
 
 ## 🚀 核心特性
