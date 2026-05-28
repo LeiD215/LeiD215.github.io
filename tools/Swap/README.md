@@ -4,9 +4,9 @@
 
 First of all, download the main script:
 ```
-wget https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/Swap/swap.sh -O swap && chmod +x swap
+wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swap.sh -O swap && chmod +x swap
 # or
-curl https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/Swap/swap.sh -O swap && chmod +x swap
+curl https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swap.sh -O swap && chmod +x swap
 ```
 
 交互界面:
