@@ -1,34 +1,34 @@
-#!/bin/bash
+#!/bin/sh
 
 # =================================================================
-#  系统级网络与资源自适应优化脚本 (完全独立完全体版)
+#  系统级网络与资源自适应优化脚本 (POSIX sh 100% 兼容完全体版)
 #  适用场景：Xray节点 + Remnawave多节点管理 + Docker + 数据库Web服务器
-#  全面兼容：CentOS 7-9, Debian 9-13, Ubuntu 18-24 及未来更高版本
+#  全面兼容：CentOS 7-9, Debian 9-13, Ubuntu 18-24 
 # =================================================================
 
-# 颜色定义
-INFO="[ℹ️]"
-SUCCESS="[🎉]"
-ERROR="[❌]"
-WARN="[⚠️]"
+# 颜色与图标定义 (采用 printf 标准转义，拒绝 dash/bash 歧义)
+INFO="\033[36m[ℹ️]\033[0m"
+SUCCESS="\033[32m[🎉]\033[0m"
+ERROR="\033[31m[❌]\033[0m"
+WARN="\033[33m[⚠️]\033[0m"
+
+SYSCTL_CONF="/etc/sysctl.d/95-dleia-sysopt.conf"
+AUTO_MODE=false
+UNINSTALL_MODE=false
 
 # 打印帮助信息
 show_help() {
-    echo "使用方法:"
-    echo "  新建优化:   $0 [--auto|-y]"
-    echo "  卸载优化:   $0 --uninstall"
-    echo "例如:"
-    echo "  $0                  (交互式运行网络与系统资源优化)"
-    echo "  $0 -y               (无人值守自动一键全盘优化)"
-    echo "  $0 --uninstall      (一键卸载优化文件，恢复系统默认限制)"
+    printf "使用方法:\n"
+    printf "  新建优化:   $0 [--auto|-y]\n"
+    printf "  卸载优化:   $0 --uninstall\n"
+    printf "例如:\n"
+    printf "  $0                  (交互式运行网络与系统资源优化)\n"
+    printf "  $0 -y               (无人值守自动一键全盘优化)\n"
+    printf "  $0 --uninstall      (一键卸载优化文件，恢复系统默认限制)\n"
     exit 1
 }
 
-AUTO_MODE=false
-UNINSTALL_MODE=false
-SYSCTL_CONF="/etc/sysctl.d/95-dleia-sysopt.conf"
-
-# 参数解析
+# 参数解析 (完全兼容纯 sh 语法)
 for arg in "$@"; do
     case $arg in
         --uninstall) UNINSTALL_MODE=true ;;
@@ -37,50 +37,42 @@ for arg in "$@"; do
     esac
 done
 
-# 核心优化逻辑封装
 optimizing_system() {
     ## ==================== 卸载模式 ====================
     if [ "$UNINSTALL_MODE" = "true" ]; then
-        echo -e "${INFO} 开始卸载系统网络与资源限制优化..."
+        printf "%b 开始卸载系统网络与资源限制优化...\n" "$INFO"
         
-        # 1. 移除 sysctl 配置
         if [ -f "$SYSCTL_CONF" ]; then
             sudo rm -f "$SYSCTL_CONF"
-            echo -e "${SUCCESS} 已删除内核网络参数配置文件: $SYSCTL_CONF"
+            printf "%b 已删除内核网络参数配置文件: %s\n" "$SUCCESS" "$SYSCTL_CONF"
         else
-            echo -e "${INFO} 未发现自定义内核参数优化文件，无需处理。"
+            printf "%b 未发现自定义内核参数优化文件，无需处理。\n" "$INFO"
         fi
         
-        # 2. 恢复 systemd 配置
         if [ -f "/etc/systemd/system.conf.bak" ]; then
             sudo mv /etc/systemd/system.conf.bak /etc/systemd/system.conf
             sudo systemctl daemon-reload >/dev/null 2>&1
-            echo -e "${SUCCESS} 已还原 Systemd 全局资源限制配置。"
+            printf "%b 已还原 Systemd 全局资源限制配置。\n" "$SUCCESS"
         fi
         
-        # 3. 恢复 limits.conf 配置
         if [ -f "/etc/security/limits.conf.bak" ]; then
             sudo mv /etc/security/limits.conf.bak /etc/security/limits.conf
-            echo -e "${SUCCESS} 已还原安全控制 limits.conf 文件描述符限制。"
+            printf "%b 已还原安全控制 limits.conf 文件描述符限制。\n" "$SUCCESS"
         fi
 
-        # 4. 清理 profile 注入
         if [ -f "/etc/profile" ]; then
             sudo sed -i '/ulimit -SHn/d' /etc/profile
             sudo sed -i '/ulimit -SHu/d' /etc/profile
         fi
 
-        # 5. 重刷系统参数
         sudo sysctl --system >/dev/null 2>&1
-        echo -e "${SUCCESS} 卸载完成！内核及资源参数已完美恢复系统原生状态。"
+        printf "%b 卸载完成！内核及资源参数已完美恢复系统原生状态。\n" "$SUCCESS"
         exit 0
     fi
 
-
     ## ==================== 优化模式 ====================
-    echo -e "${INFO} 开始进行系统级网络与复合业务优化 (自适应 CPU/内存/内核版本)..."
+    printf "%b 开始进行系统级网络与复合业务优化 (自适应 CPU/内存/内核版本)...\n" "$INFO"
 
-    # 1. 动态获取系统硬件与内核参数
     if [ -f /proc/meminfo ]; then
         total_mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
         total_mem_mb=$((total_mem_kb / 1024))
@@ -92,13 +84,11 @@ optimizing_system() {
     kernel_major=$(uname -r | cut -d. -f1)
     kernel_minor=$(uname -r | cut -d. -f2)
 
-    # 动态获取当前正在使用的拥塞控制算法
     current_cc=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "bbr")
     current_qdisc=$(cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo "fq")
-    [[ "$current_cc" == "unknown" || -z "$current_cc" ]] && current_cc="bbr"
-    [[ "$current_qdisc" == "unknown" || -z "$current_qdisc" ]] && current_qdisc="fq"
+    if [ "$current_cc" = "unknown" ] || [ -z "$current_cc" ]; then current_cc="bbr"; fi
+    if [ "$current_qdisc" = "unknown" ] || [ -z "$current_qdisc" ]; then current_qdisc="fq"; fi
 
-    # 2. 核心适配：根据内存动态分配文件限制、连接数与网络缓冲区
     local_tcp_mem_max=16777216
     local_rmem_def=65536
     local_wmem_def=65536
@@ -129,39 +119,34 @@ optimizing_system() {
         machine_stage="2G/3G 中等复合机型"
     fi
 
-    echo -e "${INFO} 检测到物理内存: ${total_mem_mb} MB, CPU核心数: ${cpu_cores} 核"
-    echo -e "${INFO} 脚本自动为您适配策略为: [${machine_stage}]"
+    printf "%b 检测到物理内存: %s MB, CPU核心数: %s 核\n" "$INFO" "$total_mem_mb" "$cpu_cores"
+    printf "%b 脚本自动为您适配策略为: [%s]\n" "$INFO" "$machine_stage"
 
-    # 3. 根据 CPU 核心数合理动态适配网卡队列
     local_netdev_max_backlog=$((2048 * cpu_cores))
-    [[ $local_netdev_max_backlog -lt 4096 ]] && local_netdev_max_backlog=4096
-    [[ $local_netdev_max_backlog -gt 16384 ]] && local_netdev_max_backlog=16384
+    if [ "$local_netdev_max_backlog" -lt 4096 ]; then local_netdev_max_backlog=4096; fi
+    if [ "$local_netdev_max_backlog" -gt 16384 ]; then local_netdev_max_backlog=16384; fi
     local_netdev_budget=$((300 + 20 * cpu_cores))
 
-    # 交互确认
     if [ "$AUTO_MODE" = "false" ]; then
-        echo -e "${INFO} 即将执行全盘网络调优并放开系统高并发文件描述符上限。"
-        read -p "是否继续执行优化？[y/n, 默认 y]: " USER_CHOICE
+        printf "%b 即将执行全盘网络调优并放开系统高并发文件描述符上限。\n" "$INFO"
+        printf "是否继续执行优化？[y/n, 默认 y]: "
+        read -r USER_CHOICE
         : ${USER_CHOICE:="y"}
         if [ "$USER_CHOICE" != "y" ] && [ "$USER_CHOICE" != "Y" ]; then
-            echo -e "${WARN} 用户取消，脚本安全退出。"
+            printf "%b 用户取消，脚本安全退出。\n" "$WARN"
             exit 0
         fi
     fi
 
-    # 4. 生成独立的网络调优配置文件
-    if [ ! -d "/etc/sysctl.d" ]; then
-        sudo mkdir -p /etc/sysctl.d
-    fi
+    if [ ! -d "/etc/sysctl.d" ]; then sudo mkdir -p /etc/sysctl.d; fi
 
-    [[ -f "$SYSCTL_CONF" ]] && sudo cp "$SYSCTL_CONF" "${SYSCTL_CONF}.bak"
+    [ -f "$SYSCTL_CONF" ] && sudo cp "$SYSCTL_CONF" "${SYSCTL_CONF}.bak"
     sudo cat /dev/null > "$SYSCTL_CONF"
 
     sudo touch /etc/sysctl.conf
     sudo sed -i '/fs.file-max/d' /etc/sysctl.conf
     sudo sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
 
-    # 写入内核统一网络调优参数
     sudo bash -c "cat >> '$SYSCTL_CONF' <<EOF
 # --- 文件系统与进程限制 ---
 fs.file-max = $local_file_max
@@ -220,24 +205,22 @@ net.ipv6.conf.lo.forwarding = 1
 net.ipv6.conf.all.disable_ipv6 = 0
 net.ipv6.conf.default.disable_ipv6 = 0
 
-# --- 默认拥塞控制 (动态继承系统已有算法) ---
+# --- 默认拥塞控制 ---
 net.core.default_qdisc = $current_qdisc
 net.ipv4.tcp_congestion_control = $current_cc
 EOF"
 
-    # 5. 根据老旧发行版内核进行高级旧参数向下兼容补偿
-    if [[ "$kernel_major" -lt 4 || ("$kernel_major" -eq 4 && "$kernel_minor" -lt 12) ]]; then
+    if [ "$kernel_major" -lt 4 ] || { [ "$kernel_major" -eq 4 ] && [ "$kernel_minor" -lt 12 ]; }; then
         sudo bash -c "echo 'net.ipv4.tcp_tw_recycle = 0' >> '$SYSCTL_CONF'"
     fi
-    if [[ "$kernel_major" -lt 4 || ("$kernel_major" -eq 4 && "$kernel_minor" -lt 11) ]]; then
+    if [ "$kernel_major" -lt 4 ] || { [ "$kernel_major" -eq 4 ] && [ "$kernel_minor" -lt 11 ]; }; then
         sudo bash -c "echo 'net.ipv4.tcp_fack = 1' >> '$SYSCTL_CONF'"
     fi
 
-    # 6. 系统并发资源限制极限优化
-    echo -e "${INFO} 正在优化系统全局文件描述符与 Systemd 资源吞吐限制..."
+    printf "%b 正在优化系统全局文件描述符与 Systemd 资源吞吐限制...\n" "$INFO"
 
-    if [[ -d "/etc/systemd" ]]; then
-        [[ ! -f "/etc/systemd/system.conf.bak" ]] && sudo cp /etc/systemd/system.conf /etc/systemd/system.conf.bak
+    if [ -d "/etc/systemd" ]; then
+        [ ! -f "/etc/systemd/system.conf.bak" ] && sudo cp /etc/systemd/system.conf /etc/systemd/system.conf.bak
         sudo bash -c "cat > /etc/systemd/system.conf <<EOF
 [Manager]
 DefaultTimeoutStopSec=30s
@@ -250,7 +233,7 @@ EOF"
     fi
 
     if [ -d "/etc/security" ]; then
-        [[ ! -f "/etc/security/limits.conf.bak" ]] && sudo cp /etc/security/limits.conf /etc/security/limits.conf.bak
+        [ ! -f "/etc/security/limits.conf.bak" ] && sudo cp /etc/security/limits.conf /etc/security/limits.conf.bak
         sudo bash -c "cat > /etc/security/limits.conf <<EOF
 * soft   nofile    $local_file_max
 * hard   nofile    $local_file_max
@@ -265,78 +248,72 @@ root  hard   nproc     unlimited
 root  soft   core      unlimited
 root  hard   core      unlimited
 EOF"
-fi
+    fi
 
     sudo sed -i '/ulimit -SHn/d' /etc/profile
     sudo sed -i '/ulimit -SHu/d' /etc/profile
 
-    if [[ -f "/etc/pam.d/common-session" ]] && ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
+    if [ -f "/etc/pam.d/common-session" ] && ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
         sudo bash -c "echo 'session required pam_limits.so' >> /etc/pam.d/common-session"
     fi
 
-    # 7. 应用内核与系统参数
-    echo -e "${INFO} 正在应用自适应内核网络参数..."
+    printf "%b 正在应用自适应内核网络参数...\n" "$INFO"
     sudo sysctl --system >/dev/null 2>&1
 
-    if [[ -f /sys/kernel/mm/transparent_hugepage/enabled ]]; then
+    if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
         sudo bash -c "echo always > /sys/kernel/mm/transparent_hugepage/enabled"
     fi
 
-    ## ==================== 新增：自动化网络/资源调优成果自检报告 ====================
-    echo
-    echo "=================================================="
-    echo "         📊 SYSOPT 网络与资源自检健康报告          "
-    echo "=================================================="
+    ## ==================== 自检健康报告 (POSIX printf 升级版) ====================
+    printf "\n"
+    printf "==================================================\n"
+    printf "         📊 SYSOPT 网络与资源自检健康报告          \n"
+    printf "==================================================\n"
 
-    # 验证 1：拥塞控制算法验证
     FINAL_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     FINAL_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null)
-    echo -e "  [拥塞控制算法]：\033[32m$FINAL_CC\033[0m  (队列规则: \033[36m$FINAL_QDISC\033[0m)"
+    printf "  [拥塞控制算法]：\033[32m%s\033[0m  (队列规则: \033[36m%s\033[0m)\n" "$FINAL_CC" "$FINAL_QDISC"
 
-    # 2. 内核缓冲区自适应生效验证
     FINAL_FMAX=$(sysctl -n fs.file-max 2>/dev/null)
     FINAL_CONN=$(sysctl -n net.core.somaxconn 2>/dev/null)
     FINAL_RDEF=$(sysctl -n net.core.rmem_default 2>/dev/null)
 
-    echo -e "  [内核自适应参数]："
+    printf "  [内核自适应参数]：\n"
     if [ "$FINAL_FMAX" = "$local_file_max" ]; then
-        echo -e "    - fs.file-max = $FINAL_FMAX  (\033[32m已成功同步\033[0m)"
+        printf "    - fs.file-max = %s  (\033[32m已成功同步\033[0m)\n" "$FINAL_FMAX"
     else
-        echo -e "    - fs.file-max = $FINAL_FMAX  (\033[31m未同步：当前为系统默认值\033[0m)"
+        printf "    - fs.file-max = %s  (\033[31m未同步：当前为系统默认值\033[0m)\n" "$FINAL_FMAX"
     fi
 
     if [ "$FINAL_CONN" = "$local_somaxconn" ]; then
-        echo -e "    - net.core.somaxconn = $FINAL_CONN  (\033[32m已成功同步\033[0m)"
+        printf "    - net.core.somaxconn = %s  (\033[32m已成功同步\033[0m)\n" "$FINAL_CONN"
     else
-        echo -e "    - net.core.somaxconn = $FINAL_CONN  (\033[31m未同步\033[0m)"
+        printf "    - net.core.somaxconn = %s  (\033[31m未同步\033[0m)\n" "$FINAL_CONN"
     fi
 
     if [ "$FINAL_RDEF" = "$local_rmem_def" ]; then
-        echo -e "    - net.core.rmem_default = $FINAL_RDEF  (\033[32m安全阈值锁定\033[0m)"
+        printf "    - net.core.rmem_default = %s  (\033[32m安全阈值锁定\033[0m)\n" "$FINAL_RDEF"
     else
-        echo -e "    - net.core.rmem_default = $FINAL_RDEF  (\033[33m系统自适应托管中\033[0m)"
+        printf "    - net.core.rmem_default = %s  (\033[33m系统自适应托管中\033[0m)\n" "$FINAL_RDEF"
     fi
 
-    # 3. 验证透明大页加速状态
     if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
         THP_STATUS=$(cat /sys/kernel/mm/transparent_hugepage/enabled | grep -o '\[.*\]')
         if [ "$THP_STATUS" = "[always]" ]; then
-            echo -e "  [透明大页加速]：\033[32m已开启 (Always) -> 正在为多节点管理提速\033[0m"
+            printf "  [透明大页加速]：\033[32m已开启 (Always) -> 正在为多节点管理提速\033[0m\n"
         else
-            echo -e "  [透明大页加速]：\033[33m当前状态 $THP_STATUS\033[0m"
+            printf "  [透明大页加速]：\033[33m当前状态 %s\033[0m\n" "$THP_STATUS"
         fi
     fi
 
-    # 4. 验证系统高并发文件句柄破除情况 (limits.conf)
     if grep -q "root  hard   nofile    $local_file_max" /etc/security/limits.conf 2>/dev/null; then
-        echo -e "  [系统级并发破除]：\033[32mlimits.conf 最大文件描述符已放开至 $local_file_max\033[0m"
+        printf "  [系统级并发破除]：\033[32mlimits.conf 最大文件描述符已放开至 %s\033[0m\n" "$local_file_max"
     else
-        echo -e "  [系统级并发破除]：\033[31mlimits.conf 未配置，高并发下可能触发报错\033[0m"
+        printf "  [系统级并发破除]：\033[31mlimits.conf 未配置，高并发下可能触发报错\033[0m\n"
     fi
-    echo "=================================================="
-    echo -e "${SUCCESS} 系统级网络与并发资源自适应优化部署成功！"
-    echo -e "${INFO} 建议在完成后续所有配置后，执行一次 [reboot] 重启服务器以完全释放资源限制。"
+    printf "==================================================\n"
+    printf "%b 系统级网络与并发资源自适应优化部署成功！\n" "$SUCCESS"
+    printf "%b 建议在完成后续所有配置后，执行一次 [reboot] 重启服务器以完全释放资源限制。\n" "$INFO"
 }
 
-# 显式激活并执行函数
 optimizing_system
