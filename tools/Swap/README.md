@@ -1,122 +1,65 @@
 # Swap自用版
 
-## Usage
+`swapopt.sh` 是一款专为 Linux VPS 打造的**虚拟内存（Swap）自适应创建与内核策略锁定脚本**，100% 兼容 `sh` (dash) 引导，运行时绝无碎屑报错。
 
-First of all, download the main script:
-```
-wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swap.sh -O swap && chmod +x swap
-# or
-curl https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swap.sh -O swap && chmod +x swap
-```
+---
 
-交互界面:
-```
-sh swap <size>
-```
+## 🚀 核心特性
 
-无人值守:
-```
-sh swap <size> -y
-```
+* **无碎屑全兼容**：采用 POSIX sh 标准规范重构，用 `printf` 替代 `echo -e`，使用 `sh` 运行不会吐出 `-e` 文本。
+* **智能冲突防御**：启动时自动扫描并清理系统已有的 `swappiness` 冲突配置，防止内核参数打架。
+* **业务场景切换**：支持 **[1] 纯 Xray 节点** 与 **[2] 复合服务器 (Docker/Web/数据库)** 双策略一键锁定。
+* **安全平滑降级**：首选 `fallocate` 瞬间分配；在不支持的虚拟化架构上自动降级为 `dd` 擦写，确保创建 100% 成功。
+* **无痕一键卸载**：独立写入 `/etc/sysctl.d/99-dleia-swapopt.conf`，支持一键物理抹除，秒回原生状态。
 
-Example (with 4G):
+---
 
-交互模式：
-```
-sh swap 4G
-```
+## 💻 快速入门
 
-全自动无人值守模式:
-```
-sh swap 4G -y
+脚本无需使用 `chmod +x` 提前赋权，直接使用 `sh` 引导即可。
+
+### 1. 无人值守自动流 (批量/一键装机 🏆 推荐)
+
+自动识别硬件，并按默认的“复合服务器场景”最优推荐值全自动秒刷完成：
+
+```bash
+wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swapopt.sh -O swap && sh swap 2G -y
+
 ```
 
-GEMINI搞出来的，记录一下，试试效果。
+### 2. 人工交互确认流 (精细化手动验证)
 
-1. 核心参数配置从“死板固定”变为“智能场景推荐”
-原脚本：
-不考虑服务器的硬件高低，直接死板地往系统里写入 vm.swappiness = 10 和 vm.vfs_cache_pressure = 50。这在 1G/2G 的小内存 VPS 上遇到网络突发流量时，极易导致主服务（如 Xray）因内存窒息而被系统直接杀死（OOM）。
+只指定容量运行，可手动选择业务场景并确认内核推荐值：
 
-新脚本：
-引入了智能推荐引擎。脚本启动后会自动读取服务器的物理内存，并结合用户选择的应用场景（纯 Xray 节点 vs 复合 Docker/Web 服务器）进行动态计算。
+```bash
+wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swapopt.sh -O swap && sh swap 2G
 
-例如：遇到 1G 内存的 VPS，它会聪明地推荐 60 / 100 以确保服务器极限生存；遇到 8G 内存时，才推荐高性能的 10 / 60。
-
-2. 系统内核配置路径更符合现代规范（不污染主配置）
-原脚本：
-使用 tee -a /etc/sysctl.conf 往系统的全局主配置文件尾部强行追加内容。这是一种比较粗暴的做法，多运行几次就会导致主文件充斥着重复的垃圾代码，且系统升级时容易被覆盖。
-
-新脚本：
-采用了现代 Linux（如 Debian 13/Ubuntu 24）推荐的模块化配置规范，将参数精准写入独立的 /etc/sysctl.d/99-swap-optimize.conf 文件。这种设计极度干净，不仅不会污染主系统，而且非常便于后续的统一管理、修改或删除。
-
-3. 新增“全盘历史冲突检测与清理”功能（工业级防呆）
-原脚本：
-完全不检测系统过去的状况，不管不顾地直接去写新值。如果服务器之前被别的脚本或者你手动改过这些参数，多处配置重叠会导致内核加载时产生混乱。
-
-新脚本：
-具备配置审计功能。它会先扫描 /etc/sysctl.conf 和 /etc/sysctl.d/ 下的所有文件：
-
-如果发现有历史冲突行，它会清晰地打印出冲突文件路径和当前的内核实时生效值。
-
-在交互模式下会礼貌地询问你是否覆盖；一旦你确认，它会自动对旧文件进行 .bak 备份，然后用 sed 干净地剔除掉旧冲突行，确保新内核参数 100% 完美生效。
-
-4. 彻底解决多发行版、老旧系统的“跨时代兼容性”
-原脚本：
-
-依赖 fallocate 命令创建文件。在部分特殊的虚拟化架构（如部分 OpenVZ / Btrfs 文件系统）下会直接闪退报错 swapfile has holes。
-
-如果未来改用 free -m 抓取内存，在 CentOS 5/6 等老系统的不同格式下，命令可能会抓空导致脚本报错。
-
-新脚本：
-
-命令双保险降级机制：优先使用瞬间完成的 fallocate，一旦系统不支持，会自动无缝降级为最稳妥、兼容性 100% 的 dd 擦写命令。
-
-硬核内存读取：摒弃了格式总在变的老旧 free 命令，直接读取 Linux 二十年来从未变过格式的底层 /proc/meminfo，从而让脚本从 CentOS 5 到 Debian 13 甚至未来的新发行版都能 100% 完美运行。
-
-老系统补丁：自动判断并支持在缺少 /etc/sysctl.d/ 文件夹的极老 Linux 系统上自动补票创建。
-
-5. 从单向脚本升级为“多模态运维工具”
-原脚本：
-只有一个功能：只能用来新建默认路径的 Swap，且必须进行人机交互。
-
-新脚本：
-重构为了支持多种语境的运维小工具：
-
-自动化/无人值守模式：支持追加 -y 或 --auto 参数。在批量部署或写进自动化装机脚本时，它会保持沉默，全自动按推荐值搞定一切。
-
-一键安全卸载模式：支持运行 ./swap.sh --uninstall。它不仅会帮你安全地关闭并删除 swap 文件，还会干净地抹掉 /etc/fstab 里的开机挂载项，并顺手拔掉 /etc/sysctl.d/ 里的参数文件，让系统秒回最纯净的初始状态。
-
-完美的参数容错解析：不再死板限制输入顺序，它能自己用 case 语法从你输入的参数里盲猜哪个是大小（如 2G）、哪个是路径（如 /myswap），且完美兼容你最习惯的 sh swap 2G 运行指令。
-
-
-# Swap
-
-Simple swap setup script for Linux
-
-Swap is an area on a hard drive that has been designated as a place where the operating system can temporarily store data that it can no longer hold in RAM.
-
-Disclamer: This script may not work on every GNU/Linux distro. Sorry.
-
-## Usage
-
-First of all, download the main script:
-```
-wget https://raw.githubusercontent.com/Cretezy/Swap/master/swap.sh -O swap
-# or
-curl https://raw.githubusercontent.com/Cretezy/Swap/master/swap.sh -o swap
 ```
 
-Then simply run the file with this format:
-```
-sh swap <size>
+### 3. 一键无痕卸载流 (干净利落还原)
+
+关闭并物理删除 Swap 文件，擦除开机挂载，拔除内核配置文件：
+
+```bash
+sh swap --uninstall
+
 ```
 
-Example (with 4G):
-```
-sh swap 4G
+*(注：如果创建时指定了自定义路径，如 `sh swap 4G /mnt/swap`，则卸载时也需带上路径：`sh swap --uninstall /mnt/swap`)*
+
+---
+
+## 👑 黄金装机两步连招 (建议搭配 sysopt.sh)
+
+为使系统底层加载达到完美协同，请遵循“先网络（95），后虚拟内存（99）”的原则：
+
+```bash
+# 第一步：解开系统网络连接数与 Systemd 高并发文件描述符上限
+wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Sysopt/sysopt.sh -O sysopt.sh && sh sysopt.sh -y
+
+# 第二步：挂载 2G 安全虚拟内存并锁定复合服务器防崩溃策略
+wget https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Swap/swapopt.sh -O swap && sh swap 2G -y
+
 ```
 
-The default path for the swap file is /swapfile. If you wish to change this, simple the file location (file must not exist) add it to the command:
-```
-sh swap 4G /swap
-```
+> ⚠️ **运维注意**：两步全部跑完且自检通过后，请在终端输入 **`reboot`** 重启一次服务器。重启后，Systemd 的全局资源线程限制才会彻底刷新生效，整台 VPS 将稳如磐石！
