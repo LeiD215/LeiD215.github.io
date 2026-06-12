@@ -1,10 +1,12 @@
-# 小白（就是我）自用的防火墙设置脚本
+# 小白（就是我）自用的ACME设置脚本
+
+根据"甬哥Github项目：github.com/yonggekkk"的原始脚本修改而来。
 
 ## Usage
 
 First of all, download the main script:
 ```
-{ curl -sSL https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh > firewall.sh || wget -qO firewall.sh https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh; } && chmod +x firewall.sh && sudo ./firewall.sh
+{ curl -sSL https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/acme/acme.sh > acme.sh || wget -qO acme.sh https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/acme/acme.sh; } && chmod +x acme.sh && sudo ./acme.sh
 ```
 
 GEMINI搞出来的，记录一下，试试效果。
