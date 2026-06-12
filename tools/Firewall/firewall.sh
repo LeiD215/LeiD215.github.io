@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🛡️ Linux 自动化防火墙安全管理脚本 (高级综合完美版)
+# 🛡️ Linux 自动化防火墙安全管理脚本 (高级综合完美版 v2.1)
 # 支持系统: CentOS, Debian, Ubuntu, Rocky Linux, AlmaLinux 等
-# 功能特性: 自动识别OS、解冲突卸载、保留现存无缝接管、SSH防锁死、
+# 功能特性: 自动识别OS、解冲突卸载、保留现存无缝接管、SSH防锁死(纯数字高精修复)、
 #           内外网端口转发、IPv4/IPv6 双栈智能内核转发配置。
 # ==============================================================================
 
@@ -149,22 +149,31 @@ manage_installation() {
 }
 
 # ==========================================
-# 3. SSH 端口智能检测与防御初始化
+# 3. SSH 端口智能检测与防御初始化 (高精防错升级)
 # ==========================================
 init_ssh_security() {
     echo "------------------------------------------"
     echo "🛡️ 正在启动 [SSH 安全初始化防御拦截] 机制..."
     
-    # 精准读取系统当前真实监听的 SSH 端口
-    SSH_PORT=$(ss -tlnp | grep -E 'sshd|"sshd"' | awk '{print $4}' | awk -F':' '{print $nf}' | sort -nu | head -n1)
-    if [ -z "$SSH_PORT" ]; then
+    # 强力升级：精准提取纯数字端口，彻底过滤 0.0.0.0: 或 [::]: 干扰
+    SSH_PORT=$(ss -tlnp | grep -E 'sshd|"sshd"' | awk '{print $4}' | awk -F':' '{print $NF}' | tr -d ']' | sort -nu | head -n1)
+    
+    if [ -z "$SSH_PORT" ] || ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; then
+        # 备用方案：通过 sshd_config 配置文件解析
         SSH_PORT=$(grep -E -i "^\s*Port\s+" /etc/ssh/sshd_config | awk '{print $2}' | head -n1)
         [ -z "$SSH_PORT" ] && SSH_PORT=22
     fi
 
-    read -p "🤖 智能检测到当前 SSH 端口可能是 [ $SSH_PORT ]。请按回车确认，或直接输入您的实际 SSH 端口: " user_port
+    echo "🤖 智能检测到当前真实 SSH 端口为: [ $SSH_PORT ]"
+    read -p "   请按回车直接确认，或者输入您修改过的实际 SSH 端口: " user_port
     if [ ! -z "$user_port" ]; then
         SSH_PORT=$user_port
+    fi
+
+    # 再次做最终纯数字合法性校验，防止由于任何意外导致放行空规则而锁死
+    if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; then
+        echo "❌ 错误: 最终识别到的端口 [$SSH_PORT] 不是合法的纯数字，为防锁死，放弃初始化！"
+        return 1
     fi
 
     echo "🔒 安全策略执行中：默认拒绝所有外部入站流量，仅放行确认的 SSH 端口 ($SSH_PORT)..."
@@ -207,7 +216,7 @@ enable_ip_forwarding() {
             sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
             grep -q "net.ipv6.conf.all.forwarding" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
             
-            # 健壮性加固
+            # 健壮性加固：防止动态机房网络因开启转发而丢失公网 IPv6
             sysctl -w net.ipv6.conf.all.accept_ra=2 >/dev/null 2>&1
             grep -q "net.ipv6.conf.all.accept_ra" /etc/sysctl.conf || echo "net.ipv6.conf.all.accept_ra=2" >> /etc/sysctl.conf
         fi
