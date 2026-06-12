@@ -4,7 +4,7 @@
 
 First of all, download the main script:
 ```
-curl -sSO https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh || wget -q https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh && chmod +x firewall.sh && sudo ./firewall.sh
+{ curl -sSL https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh > firewall.sh || wget -qO firewall.sh https://github.com/LeiD215/LeiD215.github.io/raw/refs/heads/master/tools/Firewall/firewall.sh; } && chmod +x firewall.sh && sudo ./firewall.sh
 ```
 
 GEMINI搞出来的，记录一下，试试效果。
