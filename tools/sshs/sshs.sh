@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # 脚本名称: sshs.sh
-# 版本号:   1.1.1 (生产级加固重构版 - 精准时控与 PAM 零漏洞)
+# 版本号:   1.1.3 (修复终端会话 PAM 多阶段死锁)
 # 描述:     Linux SSH 安全加固与 2FA 一键部署脚本
 #           完美兼容群晖虚拟机等虚拟化环境，防时间漂移，彻底解决多通道死锁
 # ==============================================================================
@@ -14,8 +14,7 @@ set -euo pipefail
 # 0. 统一定义只读全局配置（引入 PID 防止并发冲突）
 # ------------------------------------------------------------------------------
 readonly TIME_STAMP="$(date +%Y%m%d_%H%M%S)_$$"
-# 【已修复：P1级问题】统一为 1.1.1 并清理了 AI 引用标记[cite: 1]
-readonly BAK_SUFFIX="pre_secure_v1.1.1_${TIME_STAMP}"
+readonly BAK_SUFFIX="pre_secure_v1.1.3_${TIME_STAMP}"
 
 readonly SSHD_CONFIG="/etc/ssh/sshd_config"
 readonly PAM_SSH="/etc/pam.d/sshd"
@@ -51,7 +50,7 @@ readonly KEY_URL_DOMESTIC="https://gitee.com/LeiD215/LeiD215.gitee.io/raw/master
 rollback_all() {
     echo ""
     echo "[-] [警告] 检测到异常、校验失败或用户中断！启动安全回滚机制..."
-    
+  
     if [ -f "${SSHD_BAK}" ]; then
         cp "${SSHD_BAK}" "${SSHD_CONFIG}" && echo "[+] 已恢复原始 sshd_config"
     fi
@@ -64,7 +63,7 @@ rollback_all() {
     if rm -f /root/.google_authenticator 2>/dev/null; then
         echo "[+] 已彻底清理 2FA 运行时临时令牌残留文件"
     fi
-    
+  
     echo "[+] 正在尝试重新拉起 SSH 服务..."
     if systemctl restart "${SSH_SERVICE_NAME}" >/dev/null 2>&1; then
         echo "[★] 安全网：SSH 服务已成功恢复并拉起！原配置已复原。"
@@ -82,7 +81,7 @@ if [ "${EUID}" -ne 0 ]; then
 fi
 
 echo "=================================================================="
-echo "        Linux SSH 安全加固与 2FA 一键部署脚本 v1.1.1"
+echo "        Linux SSH 安全加固与 2FA 一键部署脚本 v1.1.3"
 echo "=================================================================="
 
 # ------------------------------------------------------------------------------
@@ -126,14 +125,14 @@ echo "[+] 公钥格式校验通过。"
 while true; do
     read -p "[?] 请输入新的 SSH 端口号 [1025-65535] (默认 2222): " NEW_PORT
     NEW_PORT=${NEW_PORT:-2222}
-    
+  
     if [[ "${NEW_PORT}" =~ ^[0-9]+$ ]] && [ "${NEW_PORT}" -ge 1024 ] && [ "${NEW_PORT}" -le 65535 ]; then
         if command -v ss >/dev/null 2>&1; then
             PORT_IN_USE=$(ss -tlnp | grep -w ":${NEW_PORT}" || true)
         else
             PORT_IN_USE=$(netstat -tlnp | grep -w ":${NEW_PORT}" 2>/dev/null || true)
         fi
-        
+      
         if [ -n "${PORT_IN_USE}" ]; then
             echo "[-] 警告: 端口 ${NEW_PORT} 已被系统其他程序占用，请更换！"
         else
@@ -159,7 +158,7 @@ ENABLE_2FA=$(echo "${ENABLE_2FA}" | tr '[:upper:]' '[:lower:]')
 # ------------------------------------------------------------------------------
 if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     echo "[+] 正在配置时间同步与虚拟化感知补偿机制..."
-    
+  
     # 4.1 安装 Chrony
     if ! command -v chronyd >/dev/null 2>&1; then
         echo "[+] 正在安装 chrony 守护进程..."
@@ -202,9 +201,9 @@ if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     cp "${CHRONY_CONF}" "${CHRONY_BAK}"
     sed -i '/^[[:space:]]*server /d' "${CHRONY_CONF}"
     sed -i '/^[[:space:]]*pool /d' "${CHRONY_CONF}"
-    
+  
     cat << EOF >> "${CHRONY_CONF}"
-# 1.1.1 高可用时钟源
+# 1.1.3 高可用时钟源
 server time.apple.com iburst
 server ntp.aliyun.com iburst
 server ntp.tencent.com iburst
@@ -223,7 +222,7 @@ EOF
 
     systemctl enable "${CHRONY_SERVICE}" >/dev/null 2>&1 || true
     systemctl restart "${CHRONY_SERVICE}" >/dev/null 2>&1 || true
-    
+  
     # 4.5 物理对齐时间，并写回虚拟机硬件时钟
     chronyc makestep >/dev/null 2>&1 || true
     if [[ "${VIRT_TYPE}" != "none" ]]; then
@@ -267,7 +266,7 @@ elif command -v iptables >/dev/null 2>&1; then
         iptables -D INPUT -p tcp --dport 22 -j ACCEPT
     done
     iptables -A INPUT -p tcp --dport "${NEW_PORT}" -j ACCEPT
-    
+  
     IPTABLES_SAVED=false
     for path in /etc/sysconfig/iptables /etc/iptables/rules.v4 /etc/iptables/rules; do
         if iptables-save > "${path}" 2>/dev/null; then
@@ -276,7 +275,7 @@ elif command -v iptables >/dev/null 2>&1; then
             break
         fi
     done
-    
+  
     if [ "${IPTABLES_SAVED}" = false ]; then
         echo "[!] 警告：无法持久化本地 iptables 规则，建议手动保存。"
     fi
@@ -326,7 +325,7 @@ sed -i '/^[[:space:]]*ChallengeResponseAuthentication[[:space:]]/d' "${SSHD_CONF
 # ------------------------------------------------------------------------------
 if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     echo "[+] 正在下载并安装 Google Authenticator PAM 模块..."
-    
+  
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -y && apt-get install -y libpam-google-authenticator
     elif command -v yum >/dev/null 2>&1; then
@@ -353,20 +352,26 @@ if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     fi
     echo "[+] PAM 模块验证通过：${PAM_MODULE_PATH}"
 
-    # 8.1 注入 PAM：坚持使用 required 认证，堵死 bypass 漏洞
+    # 8.1 注入 PAM：仅在 auth 段启用 2FA
+    # 【已修复】pam_google_authenticator.so 不支持 account 段(pam_sm_acct_mgmt 未实现)，
+    # 强行加入会导致 "PAM unable to resolve symbol" 错误并触发密码回落认证
     if [ -f "${PAM_SSH}" ]; then
         cp "${PAM_SSH}" "${PAM_BAK}"
         
-        # 彻底移除旧模块行，防止重复添加
+        # 彻底移除所有旧模块行，防止重复添加
         sed -i '/pam_google_authenticator.so/d' "${PAM_SSH}"
         
-        # 将 required 规则干净、精准地推入首行
+        # 将 auth required 规则干净、精准地推入首行
         sed -i '1i auth required pam_google_authenticator.so' "${PAM_SSH}"
+        
+        # 【已修复】注释掉 @include common-auth，防止其内部的 pam_unix.so
+        # 在通过 2FA 后仍要求系统密码，导致 keyboard-interactive 死循环/连接被拒
+        sed -i 's/^@include common-auth/# @include common-auth/' "${PAM_SSH}"
     fi
 
     # 8.2 彻底允许键盘交互通道并组建 [公钥+2FA] 的原子双因子认证
     echo "KbdInteractiveAuthentication yes" >> "${SSHD_CONFIG}"
-    
+  
     sed -i '/^[[:space:]]*AuthenticationMethods[[:space:]]/d' "${SSHD_CONFIG}"
     echo "AuthenticationMethods publickey,keyboard-interactive" >> "${SSHD_CONFIG}"
 
@@ -375,7 +380,7 @@ if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     echo "[!!!] 重要提示：即将开始为 root 生成 2FA 密钥。"
     echo "      请拿出手机或 1Password 准备好扫码。"
     echo "------------------------------------------------------------------"
-    
+  
     # 动态时钟窗口自适应：虚拟机使用 ±2.5分钟窗口(-w 5)，物理宿主/云主机使用标准 ±1.5分钟窗口(-w 3)
     if [[ "${VIRT_TYPE}" =~ ^(kvm|qemu|oracle|vmware)$ ]]; then
         echo "[+] 检测为虚拟化环境，自动应用安全宽容时间窗口（±2.5分钟容错 -w 5）"
@@ -436,6 +441,15 @@ if [[ "${ENABLE_2FA}" == "y" || "${ENABLE_2FA}" == "yes" ]]; then
     fi
 fi
 
+# 【已修复】Ubuntu 24.04 等系统使用 ssh.socket 进行按需激活，
+# 会导致 sshd_config 中的 Port 修改不生效（仍监听默认 22 端口）
+if systemctl list-units --type=socket 2>/dev/null | grep -q "ssh.socket"; then
+    echo "[+] 检测到 ssh.socket 存在，正在禁用以确保端口配置生效..."
+    systemctl stop ssh.socket >/dev/null 2>&1 || true
+    systemctl disable ssh.socket >/dev/null 2>&1 || true
+    systemctl enable "${SSH_SERVICE_NAME}" >/dev/null 2>&1 || true
+fi
+
 echo "[+] 物理链路校验通过，正在重启 ${SSH_SERVICE_NAME} 服务..."
 systemctl restart "${SSH_SERVICE_NAME}"
 
@@ -465,3 +479,13 @@ while true; do
         echo "[-] 请输入 y (成功) 或 n (失败)"
     fi
 done
+
+echo ""
+echo "=================================================================="
+echo "[★] SSH 安全加固完成！"
+echo "=================================================================="
+echo "版本: v1.1.3"
+echo "修复: 终端会话 PAM 多阶段死锁问题"
+echo "修复: 移除 account 段 2FA 配置，避免符号错误"
+echo "新增: 自动禁用 ssh.socket 确保端口生效"
+echo "=================================================================="
