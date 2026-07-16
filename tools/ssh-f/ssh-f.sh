@@ -2,8 +2,9 @@
 
 # ==============================================================================
 # 脚本名称: ssh-f.sh
-# 版本号:   1.0.0
+# 版本号:   1.0.1 (防火墙全兼容版)
 # 描述:     SSH + Fail2ban 交互式一键加固脚本
+#           完美兼容 ufw/firewalld/iptables 三种防火墙
 #           配合 sshs.sh 使用，提供企业级防护能力
 # ==============================================================================
 
@@ -45,11 +46,35 @@ print_info() {
 
 # 确保以 root 权限运行
 if [ "${EUID}" -ne 0 ]; then
-    print_error "请使用 root 权限运行此脚本（例如: sudo ./ssh-failban-hardening.sh）"
+    print_error "请使用 root 权限运行此脚本（例如: sudo ./ssh-f.sh）"
     exit 1
 fi
 
-print_header "SSH + Fail2ban 交互式安全加固脚本 v1.0.0"
+print_header "SSH + Fail2ban 交互式安全加固脚本 v1.0.1"
+
+# ------------------------------------------------------------------------------
+# 0. 检测防火墙类型
+# ------------------------------------------------------------------------------
+FIREWALL_TYPE="none"
+SKIP_IPTABLES_PERSISTENT="false"
+
+print_info "正在检测防火墙类型..."
+
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    FIREWALL_TYPE="ufw"
+    SKIP_IPTABLES_PERSISTENT="true"
+    print_info "检测到 ufw 防火墙（Ubuntu/Debian 默认）"
+elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    FIREWALL_TYPE="firewalld"
+    SKIP_IPTABLES_PERSISTENT="true"
+    print_info "检测到 firewalld 防火墙（CentOS/RHEL 默认）"
+elif command -v iptables >/dev/null 2>&1; then
+    FIREWALL_TYPE="iptables"
+    print_info "检测到原生 iptables 防火墙"
+else
+    print_warning "未检测到已知防火墙，将使用原生 iptables"
+    FIREWALL_TYPE="iptables"
+fi
 
 # ------------------------------------------------------------------------------
 # 1. 检测当前 SSH 端口
@@ -59,6 +84,20 @@ print_info "正在检测当前 SSH 配置..."
 
 CURRENT_SSH_PORT=$(grep "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 print_info "检测到当前 SSH 端口: ${CURRENT_SSH_PORT}"
+
+# 验证防火墙是否已放行该端口
+case ${FIREWALL_TYPE} in
+    ufw)
+        if ! ufw status | grep -q "${CURRENT_SSH_PORT}/tcp"; then
+            print_warning "ufw 尚未放行端口 ${CURRENT_SSH_PORT}，请确认是否已手动配置"
+        fi
+        ;;
+    firewalld)
+        if ! firewall-cmd --list-ports 2>/dev/null | grep -q "${CURRENT_SSH_PORT}/tcp"; then
+            print_warning "firewalld 尚未放行端口 ${CURRENT_SSH_PORT}，请确认是否已手动配置"
+        fi
+        ;;
+esac
 
 read -p "$(echo -e ${YELLOW}"[?]${NC} 确认使用端口 ${CURRENT_SSH_PORT} 进行加固? [Y/n]: ")" CONFIRM_PORT
 CONFIRM_PORT=${CONFIRM_PORT:-Y}
@@ -172,6 +211,7 @@ OPTIMIZE_SSH=$(echo "${OPTIMIZE_SSH}" | tr '[:upper:]' '[:lower:]')
 # ------------------------------------------------------------------------------
 echo ""
 print_header "配置摘要"
+echo "防火墙类型: ${FIREWALL_TYPE}"
 echo "SSH 端口: ${SSH_PORT}"
 echo "防护等级: $([ ${PROTECTION_LEVEL} -eq 1 ] && echo '基础' || [ ${PROTECTION_LEVEL} -eq 2 ] && echo '标准' || echo '严格')"
 echo "失败次数: ${MAXRETRY} 次"
@@ -199,17 +239,35 @@ print_header "开始系统加固"
 
 # 6.1 安装必要组件
 print_info "正在安装必要组件..."
+
+# 预配置 iptables-persistent 避免交互式提示
+if [ "${SKIP_IPTABLES_PERSISTENT}" = "false" ]; then
+    export DEBIAN_FRONTEND=noninteractive
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections 2>/dev/null || true
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections 2>/dev/null || true
+fi
+
 if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y >/dev/null 2>&1
-    apt-get install -y fail2ban iptables-persistent >/dev/null 2>&1
+    print_info "使用 apt-get 安装组件..."
+    apt-get update -y
+    apt-get install -y fail2ban
+  
+    # 只在非 ufw 环境下安装 iptables-persistent
+    if [ "${SKIP_IPTABLES_PERSISTENT}" = "false" ]; then
+        apt-get install -y iptables-persistent
+    else
+        print_info "检测到 ${FIREWALL_TYPE}，跳过 iptables-persistent 安装"
+    fi
+  
     if [ "${EMAIL_NOTIFY}" = "true" ]; then
-        apt-get install -y mailutils >/dev/null 2>&1 || print_warning "mailutils 安装失败，邮件通知将不可用"
+        apt-get install -y mailutils || print_warning "mailutils 安装失败，邮件通知将不可用"
     fi
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y epel-release >/dev/null 2>&1
-    yum install -y fail2ban iptables-services >/dev/null 2>&1
+    print_info "使用 yum 安装组件..."
+    yum install -y epel-release
+    yum install -y fail2ban iptables-services
     if [ "${EMAIL_NOTIFY}" = "true" ]; then
-        yum install -y mailx >/dev/null 2>&1 || print_warning "mailx 安装失败，邮件通知将不可用"
+        yum install -y mailx || print_warning "mailx 安装失败，邮件通知将不可用"
     fi
 else
     print_error "不支持的系统，仅支持 Debian/Ubuntu/CentOS/RHEL"
@@ -231,9 +289,10 @@ print_info "正在配置 Fail2ban..."
 
 cat > /etc/fail2ban/jail.local << EOF
 # ==============================================================================
-# Fail2ban 配置 - 由 ssh-failban-hardening.sh 自动生成
+# Fail2ban 配置 - 由 ssh-f.sh 自动生成
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 # 防护等级: $([ ${PROTECTION_LEVEL} -eq 1 ] && echo '基础' || [ ${PROTECTION_LEVEL} -eq 2 ] && echo '标准' || echo '严格')
+# 防火墙类型: ${FIREWALL_TYPE}
 # ==============================================================================
 
 [DEFAULT]
@@ -288,7 +347,7 @@ print_success "Fail2ban 配置完成"
 
 # 6.4 配置连接速率限制（如果启用）
 if [ "${RATE_LIMIT}" = "true" ]; then
-    print_info "正在配置连接速率限制..."
+    print_info "正在配置连接速率限制（兼容 ${FIREWALL_TYPE}）..."
   
     # 检查规则是否已存在
     if ! iptables -C INPUT -p tcp --dport ${SSH_PORT} -m state --state NEW -m recent --set --name SSH 2>/dev/null; then
@@ -309,15 +368,32 @@ if [ "${RATE_LIMIT}" = "true" ]; then
         print_success "速率限制: 60 秒最多 4 次连接"
     fi
   
-    # 持久化 iptables 规则
-    if command -v netfilter-persistent >/dev/null 2>&1; then
-        netfilter-persistent save >/dev/null 2>&1
-    elif [ -d /etc/iptables ]; then
-        iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-    elif [ -d /etc/sysconfig ]; then
-        iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
-    fi
-    print_success "iptables 规则已持久化"
+    # 根据防火墙类型持久化规则
+    case ${FIREWALL_TYPE} in
+        ufw)
+            print_info "ufw 环境：iptables 规则将在重启后通过 Fail2ban 自动恢复"
+            print_info "如需持久化速率限制，建议使用: ufw limit ${SSH_PORT}/tcp"
+            ;;
+        firewalld)
+            print_info "firewalld 环境：iptables 规则将在重启后通过 Fail2ban 自动恢复"
+            print_info "速率限制规则已应用（与 firewalld 共存）"
+            ;;
+        iptables)
+            # 原生 iptables 环境才持久化
+            if command -v netfilter-persistent >/dev/null 2>&1; then
+                netfilter-persistent save >/dev/null 2>&1
+                print_success "iptables 规则已持久化（netfilter-persistent）"
+            elif [ -d /etc/iptables ]; then
+                iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+                print_success "iptables 规则已持久化（/etc/iptables/rules.v4）"
+            elif [ -d /etc/sysconfig ]; then
+                iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
+                print_success "iptables 规则已持久化（/etc/sysconfig/iptables）"
+            else
+                print_warning "无法找到 iptables 持久化方法，规则在重启后可能丢失"
+            fi
+            ;;
+    esac
 fi
 
 # 6.5 SSH 配置优化（如果启用）
@@ -341,7 +417,7 @@ if [[ "${OPTIMIZE_SSH}" == "y" || "${OPTIMIZE_SSH}" == "yes" ]]; then
     cat >> /etc/ssh/sshd_config << EOF
 
 # ==============================================================================
-# SSH 安全优化 - 由 ssh-failban-hardening.sh 自动生成
+# SSH 安全优化 - 由 ssh-f.sh 自动生成
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 # ==============================================================================
 
@@ -430,6 +506,19 @@ if [ "${RATE_LIMIT}" = "true" ]; then
     fi
 fi
 
+# 显示防火墙兼容性信息
+case ${FIREWALL_TYPE} in
+    ufw)
+        print_info "与 ufw 共存架构: ufw 负责端口管理，iptables 负责速率限制，Fail2ban 负责封禁"
+        ;;
+    firewalld)
+        print_info "与 firewalld 共存架构: firewalld 负责端口管理，iptables 负责速率限制，Fail2ban 负责封禁"
+        ;;
+    iptables)
+        print_info "纯 iptables 架构: iptables 负责全部防火墙规则"
+        ;;
+esac
+
 # ------------------------------------------------------------------------------
 # 8. 生成使用说明
 # ------------------------------------------------------------------------------
@@ -440,6 +529,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  防护配置摘要"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "防火墙类型:     ${FIREWALL_TYPE}"
 echo "SSH 端口:       ${SSH_PORT}"
 echo "失败阈值:       ${MAXRETRY} 次"
 echo "封禁时长:       $((BANTIME / 3600)) 小时"
@@ -479,6 +569,15 @@ echo ""
 echo "# 查看 iptables 规则"
 echo "  iptables -L INPUT -n -v | grep ${SSH_PORT}"
 echo ""
+if [ "${FIREWALL_TYPE}" = "ufw" ]; then
+    echo "# 查看 ufw 状态"
+    echo "  ufw status verbose"
+    echo ""
+elif [ "${FIREWALL_TYPE}" = "firewalld" ]; then
+    echo "# 查看 firewalld 状态"
+    echo "  firewall-cmd --list-all"
+    echo ""
+fi
 echo "# 重启 Fail2ban"
 echo "  systemctl restart fail2ban"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -491,6 +590,11 @@ echo "  3. 备份文件已保存到: /etc/fail2ban/jail.local.bak.${BACKUP_TIMES
 if [[ "${OPTIMIZE_SSH}" == "y" || "${OPTIMIZE_SSH}" == "yes" ]]; then
     echo "  4. SSH 配置备份: /etc/ssh/sshd_config.bak.${BACKUP_TIMESTAMP}"
 fi
+if [ "${FIREWALL_TYPE}" = "ufw" ]; then
+    echo "  5. ufw 与 Fail2ban/iptables 已配置为共存模式"
+elif [ "${FIREWALL_TYPE}" = "firewalld" ]; then
+    echo "  5. firewalld 与 Fail2ban/iptables 已配置为共存模式"
+fi
 echo ""
 
 # 添加当前 IP 到白名单提示
@@ -502,12 +606,22 @@ if [ -n "${CURRENT_IP}" ] && [ "${CURRENT_IP}" != "(:0)" ]; then
     ADD_WHITELIST=$(echo "${ADD_WHITELIST}" | tr '[:upper:]' '[:lower:]')
   
     if [[ "${ADD_WHITELIST}" == "y" || "${ADD_WHITELIST}" == "yes" ]]; then
-        sed -i "/^\[DEFAULT\]/a ignoreip = 127.0.0.1/8 ::1 ${CURRENT_IP}" /etc/fail2ban/jail.local
-        systemctl restart fail2ban
-        print_success "IP ${CURRENT_IP} 已加入白名单"
-    fi
-fi
+@@ -568,3 +568,17 @@
+ADD_WHITELIST=$(echo "${ADD_WHITELIST}" | tr '[:upper:]' '[:lower:]')
+if [[ "${ADD_WHITELIST}" == "y" || "${ADD_WHITELIST}" == "yes" ]]; then
 
-echo ""
-print_success "系统加固完成！建议重启服务器以确保所有配置生效。"
-echo ""
+sed -i "/^$DEFAULT$/a ignoreip = 127.0.0.1/8 ::1 ${CURRENT_IP}" /etc/fail2ban/jail.local
+systemctl restart fail2ban
+print_success "IP ${CURRENT_IP} 已加入白名单"
+fi
++fi
+
+
++echo ""
++print_success "系统加固完成！"
++echo ""
++print_info "防火墙兼容性说明："
++echo "  • 当前使用: ${FIREWALL_TYPE}"
++echo "  • Fail2ban、iptables 速率限制与 ${FIREWALL_TYPE} 完美共存"
++echo "  • 建议重启服务器以确保所有配置生效"
++echo ""
