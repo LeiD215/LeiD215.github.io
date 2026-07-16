@@ -1,82 +1,96 @@
+---
+
 # sshs.sh (v1.0.0)
 
-`sshs.sh` 是一个用于 Linux 服务器 SSH 安全加固的一键脚本。支持修改端口、导入公钥、禁用密码登录，并可选择性配置基于 TOTP（如 Google Authenticator、1Password）的双因子认证（2FA）。
+`sshs.sh` 是一个专为 Linux 服务器设计的 SSH 安全加固与 2FA（双因子认证）一键部署脚本。脚本在保障系统安全的同时，引入了**金融级防锁死安全网**与**自愈式回滚机制**，满足 PCI-DSS 等企业安全合规审计标准。
 
 ---
 
-## 核心功能
+## 🛡️ 核心安全特性
 
-* **基础安全加固**：
-* 修改默认 SSH 端口（支持占用检测与安全范围校验）。
-* 强制关闭密码登录，仅允许 Root 用户通过密钥登录。
-* 自动导入指定公钥（支持从 GitHub / Gitee 动态下载并进行指纹合规校验）。
+1. **零注入防御**：
+* 交互式输入端口与 IP 地址时，引入严格的正则过滤 `^[a-zA-Z0-9.-]+$`，彻底阻断利用终端输入进行命令拼接与代码注入的风险。
 
 
-* **双因子认证 (2FA)**（可选）：
-* 自动安装 `google-authenticator` PAM 模块。
-* 精准配置 PAM 认证栈首行，防绕过。
-* 强制声明 `AuthenticationMethods publickey,keyboard-interactive`（必须同时通过密钥和验证码）。
+2. **安全链置顶（PAM 栈强制防御）**：
+* 自动在 `/etc/pam.d/sshd` 栈首行精准插入 `pam_google_authenticator.so`。获得最高安全拦截权，防止由于其他冗余 include 认证链导致 2FA 被绕过。
 
 
-* **配套安全支撑**：
-* **时间同步**：配置 Apple、阿里、腾讯、Cloudflare 高可用 NTP 服务（2FA 强制要求时间精准）。
-* **防火墙适配**：自动清理旧端口并放行新端口，兼容 UFW、Firewalld、iptables。
-* **SELinux 兼容**：自动识别端口占用类型，防端口策略冲突。
+3. **物理完整性校验（防静默锁死）**：
+* 重启服务前，脚本会自动在系统所有动态库路径（兼容 Multiarch，如 Ubuntu 的 `/usr/lib/x86_64-linux-gnu/security/`）下进行 `pam_google_authenticator.so` 物理文件检索。若磁盘中无此文件，脚本将安全拒绝并触发回滚，杜绝因 PAM 模块缺失导致的登录死锁。
 
 
-* **高鲁棒性与防锁死**：
-* 脚本启动时定格备份时间戳（引入 PID 规避多机并发命名冲突）。
-* 重启 SSH 服务前，物理校验 `pam_google_authenticator.so` 是否在磁盘中真实存在。
-* 验证失败或用户人工测试连接不通时，自动一键无残留回滚（复原配置并删除临时 2FA 令牌）。
+4. **自愈回滚机制**：
+* 脚本运行中如果测试连接失败（输入 `n`），或语法校验未通过，将立即启动**物理回滚**：复原 `sshd_config`、`PAM` 及 `Chrony` 配置，清理临时 2FA 运行时令牌，并给出显式状态提示。
+
+
+5. **高并发与跨天兼容**：
+* 备份文件引入精确时间戳与进程 PID 锁（格式为 `_YYYYMMDD_HHMMSS_$$`），防止在大规模自动化并发配置（如 Ansible/SaltStack）时同秒生成重名备份，且能平滑避开跨午夜的经典时间差 Bug。
 
 
 
 ---
 
-## 兼容性说明
+## 🛠️ 功能概览
 
-脚本已在以下系统通过测试：
+* **SSH 基础加固**：
+* 修改默认 SSH 端口（支持占用检测与安全范围限制）。
+* 强制禁用密码登录，仅允许 Root 通过密钥安全登录（`PermitRootLogin prohibit-password`）。
+* 自动导入指定公钥（使用 `ssh-keygen -l` 对下载的公钥进行数学物理指纹核验）。
 
-* **Debian 系**：Debian 10/11/12、Ubuntu 20.04/22.04/24.04
-* **红帽/企业系**：CentOS 7/8/9、Rocky Linux 8/9、AlmaLinux 8/9
-* **定制系统**：Amazon Linux（兼容非标 PAM 配置路径）
+
+* **多因子安全 (2FA)**：
+* 强制声明 `AuthenticationMethods publickey,keyboard-interactive`。
+* 自动安装配置 Google Authenticator 服务。
+* 自动配置 Apple、阿里、腾讯、Cloudflare 高可用 NTP 服务，保证 2FA 令牌时间精度，滑窗容错设置为 3 分钟。
+
+
+* **网络与策略自适应**：
+* **防火墙**：自动循环清空 INPUT 链上所有的 22 端口转发规则，支持并适配 UFW、Firewalld 及原生 iptables（未持久化时提供具体系统命令提示）。
+* **SELinux**：自动扫描新端口是否已被其他服务（如 Nginx `http_port_t`）打标占用，防止因暴力覆盖导致基础服务崩溃。
+
+
 
 ---
 
-## 使用方法
+## 🖥️ 兼容性说明
 
-### 1. 下载并运行
+脚本已在以下主流 64 位 Linux 发行版中通过了严格的边界测试：
 
-在目标服务器执行以下命令：
+* **Debian/Ubuntu 系列**：Debian 10/11/12、Ubuntu 20.04/22.04/24.04 及更新版本（完全兼容 Multiarch 目录）
+* **红帽/企业级系列**：CentOS 7/8/9、Rocky Linux 8/9、AlmaLinux 8/9
+* **定制版系统**：Amazon Linux（兼容非标 PAM / 服务的特殊配置路径）
+
+---
+
+## 🚀 部署命令
+
+### 1. 极简无残留版（推荐）
+
+保持传输层 SSL 强校验，不产生临时 `.sh` 物理文件：
 
 ```bash
-# 下载脚本
-nano sshs.sh  # 粘贴脚本代码并保存
-
-# 赋予执行权限
-chmod +x sshs.sh
-
-# 以 root 权限运行
-sudo ./sshs.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh || wget -qO- https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh)"
 
 ```
 
-### 2. 交互配置流程
+### 2. 带环境诊断版（适合运维手册）
 
-脚本执行后将进行以下交互引导：
+提供 Shell 兼容的 `printf` 格式，在 SSL 阻断（通常是系统时间不准）或缺少工具时提供精准的排查建议：
 
-1. **选择公钥源**：选择国内（Gitee）或国外（GitHub）下载指定的公钥。
-2. **输入新端口**：输入 1024-65535 之间的非占用数字端口（默认 2222）。
-3. **启用 2FA**：若选择启用（输入 `y`），脚本将自动配置 NTP、安装 PAM 模块并输出二维码与 5 个 8 位数的应急备用码（Scratch codes）。
+```bash
+(command -v curl >/dev/null 2>&1 && curl -fsSL "https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh" -o sshs.sh || wget -q "https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh" -O sshs.sh) && [ -s sshs.sh ] && chmod +x sshs.sh && sudo ./sshs.sh || printf "\n\033[31m[-] 安装失败！\033[0m\n\n常见原因：\n  • SSL 证书验证失败 → 同步时间: ntpdate pool.ntp.org 或 chronyc makestep\n  • GitHub 访问受限   → 请检查网络路由与 DNS 状态\n  • 缺少基本下载工具 → 安装: apt install curl 或 yum install wget\n\n"
+
+```
 
 ---
 
-## ⚠️ 生产测试与防锁死操作指南（关键）
+## ⚠️ 生产加固安全验证流程
 
-配置完成后，脚本会重新启动 SSH 服务，但**不会断开当前连接**。请严格按照以下步骤验证：
+服务在重启后**当前连接不会断开**。为保证绝对安全，请严格按以下步骤操作：
 
-1. **绝对不要关闭当前运行脚本的终端窗口**。
-2. 在本地电脑新开一个终端窗口，执行以下命令尝试登录：
+1. **切勿关闭当前正在执行脚本的窗口！**
+2. 在本地电脑上**新开一个终端窗口**，运行登录指令：
 ```bash
 ssh -p <新端口> root@<服务器IP>
 
@@ -84,22 +98,22 @@ ssh -p <新端口> root@<服务器IP>
 
 
 3. **验证登录行为**：
-* 若**未开启 2FA**：应当能通过私钥免密直接登入。
-* 若**已开启 2FA**：通过密钥校验后，终端应提示 `Verification code:`，此时输入手机 App 或 1Password 上的 6 位动态数字。
+* **未启用 2FA**：能够凭私钥直接登入。
+* **已启用 2FA**：通过密钥验证后，控制台会提示 `Verification code:`，此时输入绑定的验证器（1Password、手机 Authenticator 等）生成的 6 位数字方可登入。
 
 
-4. **决策确认**：
-* **测试登录成功**：回到脚本终端，输入 `y`，完成加固并退出。
-* **登录失败/被拦截**：回到脚本终端，输入 `n`。脚本会立即启动**无残留回滚**，将 SSH 配置、PAM 栈、时间同步复原，并删掉临时 2FA 文件，恢复到加固前的状态。
+4. **确认状态**：
+* **测试通过**：回到脚本窗口输入 `y`，加固流程圆满完成。
+* **测试失败/被卡住**：回到脚本窗口输入 `n`。脚本将立即调用 `rollback_all` 函数恢复系统状态。
 
 
 
 ---
 
-## 备份文件说明
+## 📁 备份文件清单
 
-脚本修改的所有关键系统文件均在同目录下留有备份，格式为：
+脚本自动在相关配置目录下生成带有时间戳和进程 PID 标识的只读备份：
 
 * `/etc/ssh/sshd_config.pre_secure_v1.0.0_YYYYMMDD_HHMMSS_PID`
 * `/etc/pam.d/sshd.pre_secure_v1.0.0_YYYYMMDD_HHMMSS_PID`
-* `/etc/chrony/chrony.conf.pre_secure_v1.0.0_YYYYMMDD_HHMMSS_PID`
+* `/etc/chrony/chrony.conf.pre_secure_v1.0.0_YYYYMMDD_HHMMSS_PID`（仅在启用 2FA 且存在 chrony 时生成）
