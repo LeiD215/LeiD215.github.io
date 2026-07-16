@@ -15,7 +15,7 @@
 
 
 3. **物理完整性校验（防静默锁死）**：
-* 重启服务前，脚本会自动在系统所有动态库路径（兼容 Multiarch，如 Ubuntu 的 `/usr/lib/x86_64-linux-gnu/security/`）下进行 `pam_google_authenticator.so` 物理文件检索。若磁盘中无此文件，脚本将安全拒绝并触发回滚，杜绝因 PAM 模块缺失导致的登录死锁。
+* 重启服务前，脚本会自动利用 `ldconfig` 极速定位与递归检索，在系统所有动态库路径（兼容 Multiarch，如 Ubuntu 的 `/usr/lib/x86_64-linux-gnu/security/`）下进行 `pam_google_authenticator.so` 物理文件检索。若磁盘中无此文件，脚本将安全拒绝并触发回滚，杜绝因 PAM 模块缺失导致的登录死锁。
 
 
 4. **自愈回滚机制**：
@@ -72,14 +72,30 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/LeiD215/LeiD215.github.i
 
 ```
 
-### 2. 带环境诊断版（适合运维手册）
 
-提供 Shell 兼容的 `printf` 格式，在 SSL 阻断（通常是系统时间不准）或缺少工具时提供精准的排查建议：
+* **🇨🇳 国内服务器**：
+```bash
+bash -c "$(curl -fsSL https://gitee.com/LeiD215/LeiD215.gitee.io/raw/master/tools/sshs/sshs.sh || wget -qO- https://gitee.com/LeiD215/LeiD215.gitee.io/raw/master/tools/sshs/sshs.sh)"
+
+```
+
+
+### 2. 带环境诊断版（推荐写入企业知识库/排查手册）
+
+提供 Shell 兼容的 `printf` 格式，在下载遭遇环境故障时输出精准的排查建议：
 
 ```bash
 (command -v curl >/dev/null 2>&1 && curl -fsSL "https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh" -o sshs.sh || wget -q "https://raw.githubusercontent.com/LeiD215/LeiD215.github.io/master/tools/sshs/sshs.sh" -O sshs.sh) && [ -s sshs.sh ] && chmod +x sshs.sh && sudo ./sshs.sh || printf "\n\033[31m[-] 安装失败！\033[0m\n\n常见原因：\n  • SSL 证书验证失败 → 同步时间: ntpdate pool.ntp.org 或 chronyc makestep\n  • GitHub 访问受限   → 请检查网络路由与 DNS 状态\n  • 缺少基本下载工具 → 安装: apt install curl 或 yum install wget\n\n"
 
 ```
+
+
+* **🇨🇳 国内服务器**：
+```bash
+(command -v curl >/dev/null 2>&1 && curl -fsSL "https://gitee.com/LeiD215/LeiD215.gitee.io/raw/master/tools/sshs/sshs.sh" -o sshs.sh || wget -q "https://gitee.com/LeiD215/LeiD215.gitee.io/raw/master/tools/sshs/sshs.sh" -O sshs.sh) && [ -s sshs.sh ] && chmod +x sshs.sh && sudo ./sshs.sh || printf "\n\033[31m[-] 安装失败！\033[0m\n\n常见原因：\n  • SSL 证书验证失败 → 同步时间: ntpdate pool.ntp.org 或 chronyc makestep\n  • Gitee 访问受阻    → 请检查本地网络或 DNS 状态\n  • 缺少基本下载工具 → 安装: apt install curl 或 yum install wget\n\n"
+
+```
+
 
 ---
 
